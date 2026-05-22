@@ -19,7 +19,7 @@ extern "C" NTSTATUS __fastcall CallFunc(...);
 #define print(fmt, ...)\
     printf(fmt "\n", ##__VA_ARGS__)
 
-/* Un intento jaja */
+// Struct
 typedef struct _FUNC_VAL
 {
     ULONG magic_number;
@@ -27,6 +27,7 @@ typedef struct _FUNC_VAL
 } FUNC_VAL, *PFUNC_VAL;
 
 
+// Environment
 PTEB GetEnvironmentThreadBlock()
 {
     return (PTEB)__readgsqword(0x30);
@@ -45,8 +46,7 @@ unsigned int Calculacion(const char* str) {
     return hash;
 }
 
-
-// Buscar función por hash (en lugar de por nombre)
+// Get the function from the DLL Base
 BOOL GetFunctionFrom(PVOID dllBase, PIMAGE_EXPORT_DIRECTORY pImageExportDirectory, PFUNC_VAL value) {
     PDWORD pdwAddressOfFunctions = (PDWORD)((PBYTE)dllBase + pImageExportDirectory->AddressOfFunctions);
     PDWORD pdwAddressOfNames = (PDWORD)((PBYTE)dllBase + pImageExportDirectory->AddressOfNames);
@@ -60,27 +60,21 @@ BOOL GetFunctionFrom(PVOID dllBase, PIMAGE_EXPORT_DIRECTORY pImageExportDirector
         {
             print("[+] Funcion encontrada: %s", FunctionName);
 
-            /* Una vez obtenido la funcion obtenemos el syscall number */
 
             WORD cw = 0;
             while (TRUE) {
-                // check if syscall, in this case we are too far
                 if (*((PBYTE)pFunctionAddress + cw) == 0x0f && *((PBYTE)pFunctionAddress + cw + 1) == 0x05)
                 {
                     print("[-] No se obtuvo numero syscall");
                     return FALSE;
                 }
 
-                // check if ret, in this case we are also probaly too far
                 if (*((PBYTE)pFunctionAddress + cw) == 0xc3)
                 {
                     print("[-] No se obtuvo numero syscall");
                     return FALSE;
                 }
 
-                // First opcodes should be :
-                //    MOV R10, RCX
-                //    MOV RCX, <syscall>
                 if (*((PBYTE)pFunctionAddress + cw) == 0x4c
                     && *((PBYTE)pFunctionAddress + 1 + cw) == 0x8b
                     && *((PBYTE)pFunctionAddress + 2 + cw) == 0xd1
@@ -106,7 +100,7 @@ BOOL GetFunctionFrom(PVOID dllBase, PIMAGE_EXPORT_DIRECTORY pImageExportDirector
 }
 
 
-// Gat the image 
+// Get the image
 BOOL GetImageExportDirectory(PVOID pModuleBase, PIMAGE_EXPORT_DIRECTORY* ppImageExportDirectory) {
 
 
