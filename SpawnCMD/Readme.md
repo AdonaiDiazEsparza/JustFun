@@ -5,7 +5,9 @@ This is just a demonstration of CVE-2019-16098 using Halo's Gate. I was tired wi
 In the following video, I show hw it can be use it:
 
 <p align=center>
-<video src="Video/PoC.mp4" controls></video>
+
+[Demo](Video/PoC.mp4)
+
 </p>
 
 ### DISCLAIMER
